@@ -1,0 +1,15 @@
+{
+  "chunking": {
+    "strategy": "fixed",
+    "size": 256,
+    "overlap": 64,
+    "prefix_title": true
+  },
+  "embedding": "e5-small",
+  "reranker": {
+    "model": "bge-m3",
+    "candidates_k": 10
+  },
+  "dense_gate": 0.867,
+  "rerank_gate": 0.103
+}

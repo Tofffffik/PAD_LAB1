@@ -1,0 +1,95 @@
+# Базовая конфигурация RAG-системы «Немецкие автомобили: Audi, BMW, Mercedes-Benz» (русская Википедия).
+# Любой параметр можно переопределить из CLI: --set retrieval.top_k=10
+
+paths:
+  data: data
+  raw: data/raw              # сырые ответы источника (HTML в JSON)
+  documents: data/documents  # распарсенные документы (единый формат)
+  manifest: data/manifest.db # состояние grabber'а (SQLite)
+  cache: data/cache          # кэш эмбеддингов и ответов LLM
+  qdrant: data/qdrant        # локальное хранилище Qdrant (embedded mode)
+
+grabber:
+  user_agent: "RagLabStudent/0.2 (university RAG lab; contact: tofanmacsim@gmail.com)"
+  request_delay_sec: 0.3     # вежливая пауза между запросами
+  timeout_sec: 30
+  max_retries: 5
+
+  wikipedia:
+    api_url: https://ru.wikipedia.org/w/api.php
+    page_url: https://ru.wikipedia.org/wiki/
+    # секции, которые не несут знаний для RAG (удаляем как шум)
+    skip_sections: [Примечания, Литература, Ссылки, См. также, Комментарии, Источники,
+                    Галерея, Сноски, В культуре, В массовой культуре, В искусстве, Внешние ссылки]
+    # статьи по группам: группа → entity_type в metadata
+    articles:
+      company: [Audi, BMW, Mercedes-Benz, Mercedes-Benz Group, Volkswagen AG, Auto Union, Horch, Maybach,
+                Mercedes-Maybach, Mercedes-AMG, BMW M, Audi Sport GmbH, Rolls-Royce Motor Cars, MINI, Smart (автомобильная марка),
+                Daimler Truck, DKW, NSU Motorenwerke, BMW Motorrad, Alpina, Brabus]
+      model_audi: [Audi A1, Audi A3, Audi A4, Audi A5, Audi A6, Audi A7, Audi A8, Audi Q3, Audi Q5, Audi Q7,
+                   Audi Q8, Audi TT, Audi R8, Audi e-tron, Audi e-tron GT, Audi 100, Audi 80, Audi Quattro,
+                   Audi RS 6, Audi RS 4, Audi V8]
+      model_bmw: [BMW 1, BMW 3, BMW 5, BMW 7, BMW X3, BMW X5 (E53), BMW X6, BMW X7, BMW M3, BMW M5, BMW Z4,
+                  BMW i3, BMW i8, BMW E30, BMW E34, BMW E36, BMW E39, BMW E46, BMW Isetta, BMW M1, BMW iX]
+      model_mercedes: [Mercedes-Benz S-класс, Mercedes-Benz E-класс, Mercedes-Benz C-класс, Mercedes-Benz G-класс,
+                       Mercedes-Benz SL, Mercedes-Benz GLE-класс, Mercedes-Benz GLS-класс, Mercedes-Benz A-класс,
+                       Mercedes-Benz W124, Mercedes-Benz W140, Mercedes-Benz W123, Mercedes-Benz W126,
+                       Mercedes-Benz W201, Mercedes-Benz 600, Mercedes-Benz W198, Mercedes-Benz SLS AMG,
+                       Mercedes-AMG GT, Mercedes-Benz SLR McLaren, Mercedes-Benz EQS, Mercedes-Benz Sprinter,
+                       Mercedes-Benz Unimog]
+      person: ["Бенц, Карл", "Бенц, Берта", "Даймлер, Готлиб", "Майбах, Вильгельм", "Хорьх, Август",
+               "Пиех, Фердинанд", "Порше, Фердинанд", "Еллинек, Эмиль", "Вольфф, Тото"]
+      technology: [Quattro, BMW xDrive, 4MATIC, Volkswagen TDI, Volkswagen TSI, Benz Patent-Motorwagen, BMW N54, BMW S54,
+                   VANOS, BMW S85, Mercedes-Benz M156, Турбокомпрессор, Полный привод, Антиблокировочная система,
+                   Система курсовой устойчивости]
+      motorsport: [Мерседес (команда Формулы-1), Mercedes в Формуле-1, Mercedes-Benz в автоспорте,
+                   Deutsche Tourenwagen Masters, 24 часа Ле-Мана, Audi R18, Audi R10 TDI, Audi Sport quattro,
+                   BMW Sauber]
+
+# ---------------------------------------------------------------- pipeline
+chunking:
+  strategy: fixed          # fixed | paragraph | section; выбрана в S1
+  size: 256                # токенов (токенизатор XLM-R); выбран в S1
+  overlap: 64              # токенов, только для fixed
+  prefix_title: true       # "Документ — Секция" в начале chunk
+
+embedding:
+  model: e5-small          # e5-small | bge-m3 (см. src/embeddings); выбрана в S2
+
+vector_store:
+  url: null                # null → embedded-режим (data/qdrant); http://localhost:6333 → Qdrant в Docker
+
+retrieval:
+  mode: dense              # dense | bm25 | hybrid
+  top_k: 10                # сколько кандидатов достаём из индекса; выбрано в S3
+  filters: {}              # фильтр по metadata, напр. {entity_type: [model_audi, model_bmw]}
+
+filtering:
+  score_threshold: 0.0     # минимальный cosine score (0 — выключено)
+  min_chars: 60
+  dedup: true
+  max_per_doc: 0
+
+reranker:
+  enabled: true
+  model: bge-m3            # bge-m3 (BAAI/bge-reranker-v2-m3) | mminilm
+  top_n: 5                 # сколько chunks уходит в LLM
+  min_score: 0.3           # порог релевантности после rerank (0 — выключено); выбран в S5
+
+generation:
+  provider: groq
+  model: openai/gpt-oss-120b   # выбрана в эксперименте LLM × промпт
+  prompt: strict           # strict | basic
+  temperature: 0.0
+  max_tokens: 1500
+
+judge:
+  provider: gemini
+  model: gemini-3.5-flash-lite
+  temperature: 0.0
+  max_tokens: 2000
+
+# особые параметры моделей (передаются в теле запроса)
+llm_models:
+  openai/gpt-oss-120b: {extra: {reasoning_effort: low}}
+  openai/gpt-oss-20b: {extra: {reasoning_effort: low}}

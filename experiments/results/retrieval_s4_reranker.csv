@@ -1,0 +1,3 @@
+reranker,candidates_k,n_chunks,avg_tokens,build_sec,hit@1,hit@3,hit@5,hit@10,hit@20,recall@1,recall@3,recall@5,recall@10,recall@20,precision@1,precision@3,precision@5,precision@10,precision@20,ndcg@1,ndcg@3,ndcg@5,ndcg@10,ndcg@20,mrr,latency
+none,10,2420,251.7,0.0,0.8,0.84,0.92,0.92,0.92,0.68,0.74,0.88,0.88,0.88,0.8,0.5467,0.44,0.22,0.11,0.8,0.7308,0.8355,0.8355,0.8355,0.84,0.014
+bge-m3,10,2420,251.7,0.0,0.84,0.88,0.92,0.92,0.92,0.74,0.82,0.88,0.88,0.88,0.84,0.64,0.456,0.228,0.114,0.84,0.8173,0.8533,0.8533,0.8533,0.8613,0.1787
