@@ -6,7 +6,8 @@
 Если ответа в базе нет — честно сообщает об этом.
 
 - **Источник:** ru.wikipedia.org через MediaWiki API, 117 статей (7 групп: company, model_audi, model_bmw, model_mercedes, person, technology, motorsport).
-- **Стек:** Python, HuggingFace transformers (GPU), Qdrant (embedded), Groq / Gemini API, Streamlit.
+- **Стек:** Python, HuggingFace transformers (GPU), Qdrant (embedded), Groq / Gemini API, Streamlit,
+  Langfuse (трассировка), pixi (окружение).
 
 Результаты экспериментов и выводы — в [experiments/REPORT.md](experiments/REPORT.md),
 отчёт Word — `report/Отчёт_RAG_Немецкие_автомобили.docx`.
@@ -53,6 +54,7 @@
 ```
 lab1/
 ├── app.py                    — веб-интерфейс (Streamlit)
+├── pixi.toml, pixi.lock      — окружение pixi и задачи (pixi run app / ask / test …)
 ├── configs/default.yaml      — все параметры pipeline'а и список статей
 ├── src/
 │   ├── grabber/              — источник Википедии, HTTP-клиент с повторами, манифест
@@ -64,6 +66,7 @@ lab1/
 │   ├── generation/           — промпты, клиент LLM с кэшем, источники
 │   ├── evaluation/           — датасет, метрики, LLM-as-a-Judge
 │   ├── hf.py                 — bi-/cross-encoder на transformers (CUDA, если есть)
+│   ├── tracing.py            — трассировка в Langfuse (выключена без ключей)
 │   ├── pipeline.py           — сборка RAG pipeline
 │   └── cli.py                — команды check / grab / stats / index / ask
 ├── data/eval/questions.jsonl — 30 вопросов с эталоном (doc_id + секция)
@@ -76,7 +79,20 @@ lab1/
 
 ## Запуск
 
-Требования: Python 3.12+, NVIDIA GPU желательно (на CPU тоже работает, медленнее).
+NVIDIA GPU желательна (на CPU тоже работает, медленнее). Окружение — один из двух вариантов.
+
+**Вариант A — pixi** (рекомендуется: Python ставить не нужно, версии зафиксированы в `pixi.lock`).
+Установка pixi: `winget install prefix-dev.pixi` (Linux/macOS: `curl -fsSL https://pixi.sh/install.sh | sh`).
+
+```bash
+pixi install                               # окружение .pixi/ по pixi.lock (Python 3.13, torch cu128, …)
+pixi run check                             # ключи найдены?
+pixi run app                               # веб-интерфейс → http://localhost:8501
+pixi run ask "Почему у Audi логотип из четырёх колец?"
+pixi task list                             # все задачи: grab, index, test, retrieval, generation, figures, docx…
+```
+
+**Вариант B — venv + pip** (Python 3.12+):
 
 ```bash
 python -m venv .venv
@@ -84,6 +100,8 @@ python -m venv .venv
 pip install torch --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 ```
+
+Дальше команды даны для варианта B; в pixi то же самое — `pixi run <задача>`.
 
 Ключи API — в `.env` (в `lab1/` или уровнем выше), формат в [.env.example](.env.example).
 Бесплатные ключи: [Groq](https://console.groq.com/keys), [Google AI Studio](https://aistudio.google.com/apikey).
@@ -116,6 +134,37 @@ python -m pytest tests
 с манифестом одним запросом на 50 статей, затем — SHA-256 содержимого.
 Убранные из конфига статьи помечаются `removed` и удаляются из базы;
 `grab --reparse` пересобирает документы из сохранённых сырых ответов (после правки парсера).
+
+### Трассировка в Langfuse
+
+Каждый вопрос можно записывать в [Langfuse](https://langfuse.com) — видно, что нашёл поиск, что
+отобрал reranker, какой промпт ушёл в LLM, ответ, токены и время каждого этапа.
+Трассировка необязательная: без ключей система работает как обычно.
+
+1. Зарегистрироваться на https://cloud.langfuse.com (бесплатно), создать проект →
+   Settings → API Keys → Create new API keys.
+2. Добавить в `.env` (регион US — `LANGFUSE_BASE_URL=https://us.cloud.langfuse.com`):
+   ```
+   LANGFUSE_PUBLIC_KEY=pk-lf-...
+   LANGFUSE_SECRET_KEY=sk-lf-...
+   LANGFUSE_BASE_URL=https://cloud.langfuse.com
+   ```
+3. `python -m src.cli check` покажет, что ключи найдены; в интерфейсе в боковой панели —
+   «трассировка включена», под ответом — ссылка на трассу.
+
+Структура трассы одного вопроса (`src/tracing.py`):
+
+```
+rag-ask (chain)            вопрос → ответ, источники, отказ, время этапов
+├── retrieve (retriever)   кандидаты из Qdrant: chunk, документ, секция, cosine
+├── rerank (span)          итоговые 5 chunks со скорами reranker'а, работа фильтров
+└── llm:groq (generation)  промпт, ответ, модель, токены input/output, попадание в кэш
+```
+
+Вопросы из одной вкладки браузера объединяются в сессию. `run_generation.py` пишет каждый вопрос
+датасета как трассу `eval-question` (сессия `eval:<вариант>`), а оценки судьи —
+correctness, faithfulness, relevancy, refusal_correct — как scores этой трассы.
+Если Langfuse недоступен, ответ всё равно возвращается (ошибка трассировки только логируется).
 
 ---
 
